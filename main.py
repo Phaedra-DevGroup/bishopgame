@@ -48,17 +48,46 @@ except ImportError:
     print("Warning: arabic-reshaper or python-bidi not installed. Persian text may not display correctly.")
     print("Install with: pip install arabic-reshaper python-bidi")
 
+# Characters supported by B-NAZANIN.TTF font (Unicode codepoints)
+SUPPORTED_FONT_CHARS = {
+    32, 33, 37, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 61, 91, 93, 123, 125,
+    171, 183, 187, 215, 247, 729,
+    1548, 1563, 1567, 1569, 1570, 1571, 1572, 1573, 1574, 1575, 1576, 1577, 1578, 1579, 1580, 1581, 1582, 1583,
+    1584, 1585, 1586, 1587, 1588, 1589, 1590, 1591, 1592, 1593, 1594, 1600, 1601, 1602, 1603, 1604, 1605, 1606,
+    1607, 1608, 1609, 1610, 1611, 1612, 1613, 1614, 1615, 1616, 1617, 1618, 1632, 1633, 1634, 1635, 1636, 1637,
+    1638, 1639, 1640, 1641, 1662, 1670, 1688, 1705, 1711, 1728, 1740, 1776, 1777, 1778, 1779, 1780, 1781, 1782,
+    1783, 1784, 1785,
+    8204, 8205, 8206, 8207, 8216, 8217, 8220, 8221, 8249, 8250, 8729,
+    59416, 59424, 59425, 59426, 59427, 59428, 59429, 59430, 59431, 59432, 59433, 59434, 59435, 59436, 59437,
+    64342, 64343, 64344, 64345, 64378, 64379, 64380, 64381, 64394, 64395, 64398, 64399, 64400, 64401, 64402,
+    64403, 64404, 64405, 64420, 64421, 64508, 64509, 64510, 64511, 64606, 64607, 64608, 64609, 64610,
+    65010, 65153, 65154, 65155, 65156, 65157, 65158, 65159, 65160, 65161, 65162, 65163, 65164, 65165, 65166,
+    65167, 65168, 65169, 65170, 65171, 65172, 65173, 65174, 65175, 65176, 65177, 65178, 65179, 65180, 65181,
+    65182, 65183, 65184, 65185, 65186, 65187, 65188, 65189, 65190, 65191, 65192, 65193, 65194, 65195, 65196,
+    65197, 65198, 65199, 65200, 65201, 65202, 65203, 65204, 65205, 65206, 65207, 65208, 65209, 65210, 65211,
+    65212, 65213, 65214, 65215, 65216, 65217, 65218, 65219, 65220, 65221, 65222, 65223, 65224, 65225, 65226,
+    65227, 65228, 65229, 65230, 65231, 65232, 65233, 65234, 65235, 65236, 65237, 65238, 65239, 65240, 65241,
+    65242, 65243, 65244, 65245, 65246, 65247, 65248, 65249, 65250, 65251, 65252, 65253, 65254, 65255, 65256,
+    65257, 65258, 65259, 65260, 65261, 65262, 65263, 65264, 65265, 65266, 65267, 65268, 65269, 65270, 65271,
+    65272, 65273, 65274, 65275, 65276
+}
+
+def filter_unsupported_chars(text: str) -> str:
+    """Filter out characters not supported by B-NAZANIN.TTF font"""
+    return ''.join(c for c in text if ord(c) in SUPPORTED_FONT_CHARS)
+
 # Helper function for Persian text
 def reshape_persian_text(text: str) -> str:
     """Reshape Persian/Arabic text for proper display in Pygame"""
     if not PERSIAN_SUPPORT:
-        return text
+        return filter_unsupported_chars(text)
     try:
         reshaped_text = arabic_reshaper.reshape(text)
         bidi_text = get_display(reshaped_text)
-        return bidi_text
+        # Filter unsupported characters after reshaping
+        return filter_unsupported_chars(bidi_text)
     except:
-        return text
+        return filter_unsupported_chars(text)
 
 def to_persian_number(num) -> str:
     """Convert English digits to Persian digits"""
@@ -605,14 +634,21 @@ class SettingsTextBox:
 
 
 def clean_display_text(text: str) -> str:
-    """Remove [.*] tags and \".*\" quoted text from display text"""
+    """Remove [.*] tags and \".*\" quoted text from display text, and filter unsupported characters"""
     import re
     # Remove [...] patterns (emotion tags, etc.)
-    cleaned = re.sub(r'\[.*?\]', '', text)
-    # Remove "..." quoted text patterns
-    cleaned = re.sub(r'"[^"]*"', '', cleaned)
+    # cleaned = re.sub(r'\[.*?\]', '', text)
+    # Remove " quoted text patterns
+    cleaned = re.sub(r'"', '', text)
     # Clean up extra whitespace
     cleaned = re.sub(r'\s+', ' ', cleaned).strip()
+    
+    # Filter out unsupported characters using the global set
+    cleaned = filter_unsupported_chars(cleaned)
+    
+    if cleaned.strip() == "":
+        print(text)
+    
     return cleaned
 
 
@@ -910,7 +946,7 @@ class CharacterPortrait:
             pygame.draw.rect(surface, COLOR_GOLD, inner_rect, 2, border_radius=3)
             
             # Draw helper text with shadow
-            font = pygame.font.Font("assets/Vazirmatn.ttf", 24) if Path("assets/Vazirmatn.ttf").exists() else pygame.font.Font(None, 24)
+            font = pygame.font.Font("assets/B-NAZANIN.TTF", 24) if Path("assets/B-NAZANIN.TTF").exists() else pygame.font.Font(None, 24)
             draw_text_with_shadow(surface, "یک مظنون انتخاب کنید", font, COLOR_TEXT, 
                                  self.rect.center, shadow_offset=2, center=True)
             return
@@ -1384,7 +1420,7 @@ class DetectiveGame:
         
         # Try to find a system font that supports Farsi/Arabic
         farsi_font_names = [
-            'Vazirmatn',  # If assets/Vazirmatn.ttf exists
+            'B Nazanin',  # If assets/B-NAZANIN.TTF exists
             'Arial',
             'Tahoma',
             'Microsoft Sans Serif',
@@ -1395,8 +1431,8 @@ class DetectiveGame:
         farsi_font_path = None
         
         # First try the custom font in assets
-        if Path("assets/Vazirmatn.ttf").exists():
-            farsi_font_path = "assets/Vazirmatn.ttf"
+        if Path("assets/B-NAZANIN.TTF").exists():
+            farsi_font_path = "assets/B-NAZANIN.TTF"
         else:
             # Try system fonts
             for font_name in farsi_font_names:
@@ -1565,7 +1601,7 @@ class DetectiveGame:
         # API Mode Toggle Button
         self.settings_api_toggle = Button(
             input_x, form_y, input_width, 40,
-            "✓ استفاده از API" if current_settings.get("isApiAvailable", False) else "✗ استفاده از Ollama",
+            "✓ استفاده از مدل آنلاین (برای سرعت بیشتر)" if current_settings.get("isApiAvailable", False) else "✗ استفاده از مدل آفلاین",
             FONT_FARSI_SMALL,
             COLOR_BUTTON_ACTIVE if current_settings.get("isApiAvailable", False) else COLOR_BUTTON
         )
@@ -3726,16 +3762,16 @@ class DetectiveGame:
             # Win state - gold styling
             draw_glow(self.screen, (SCREEN_WIDTH // 2, text_start_y + 15), 150, COLOR_GOLD, 40)
             draw_text_with_shadow(self.screen, "پرونده حل شد", 
-                                 pygame.font.Font("assets/Vazirmatn.ttf", 48), (150, 220, 130),
+                                 pygame.font.Font("assets/B-NAZANIN.TTF", 48), (150, 220, 130),
                                  (SCREEN_WIDTH // 2, text_start_y), shadow_offset=3, center=True)
-            draw_text_with_shadow(self.screen, "راهبه با انگیزه‌های افراطی، گدا را به قتل رساند تا شهر را نجات دهد", 
-                                 FONT_FARSI_SMALL, (180, 170, 150),
+            draw_text_with_shadow(self.screen, "راهبه با انگیزه ای گدا را به قتل رساند. به نظر تو انگیزه او چه بود؟", 
+                                 FONT_FARSI_SMALL, (255, 255, 255),
                                  (SCREEN_WIDTH // 2, text_start_y + 95), shadow_offset=1, center=True)
         else:
             # Lose state - burgundy styling
             draw_glow(self.screen, (SCREEN_WIDTH // 2, text_start_y + 15), 150, COLOR_ACCENT, 40)
             draw_text_with_shadow(self.screen, "پرونده حل نشد", 
-                                 pygame.font.Font("assets/Vazirmatn.ttf", 48), (220, 100, 100),
+                                 pygame.font.Font("assets/B-NAZANIN.TTF", 48), (220, 100, 100),
                                  (SCREEN_WIDTH // 2, text_start_y), shadow_offset=3, center=True)
             draw_text_with_shadow(self.screen, ".قاتل به خاطر اتهام اشتباه شما از مجازات فرار کرد", 
                                  FONT_FARSI_SMALL, (180, 170, 150),
@@ -3881,10 +3917,10 @@ class DetectiveGame:
                 if self.settings_api_toggle.handle_event(event):
                     self.settings_api_mode = not self.settings_api_mode
                     if self.settings_api_mode:
-                        self.settings_api_toggle.text = "✓ استفاده از API"
+                        self.settings_api_toggle.text = "✓ استفاده از مدل آنلاین (برای سرعت بیشتر)"
                         self.settings_api_toggle.color = COLOR_BUTTON_ACTIVE
                     else:
-                        self.settings_api_toggle.text = "✗ استفاده از Ollama"
+                        self.settings_api_toggle.text = "✗ استفاده از مدل آفلاین"
                         self.settings_api_toggle.color = COLOR_BUTTON
                 
                 # Handle text inputs
