@@ -749,7 +749,7 @@ class AIDetectiveEngine:
             2: "راهبه",
             3: "تاجر",
             4: "سرباز",
-            5: "پسرک (لوییس)",
+            5: "پسرک",
             6: "آشپز"
         }
         return names.get(suspect_id, "Unknown")

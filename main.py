@@ -24,6 +24,20 @@ except ImportError:
     print("Warning: opencv-python not installed. Video playback will be skipped.")
     print("Install with: pip install opencv-python")
 
+# Import moviepy for video audio extraction
+try:
+    from moviepy import VideoFileClip
+    MOVIEPY_SUPPORT = True
+except ImportError:
+    try:
+        # Fallback for older moviepy versions
+        from moviepy.editor import VideoFileClip
+        MOVIEPY_SUPPORT = True
+    except ImportError:
+        MOVIEPY_SUPPORT = False
+        print("Warning: moviepy not installed. Video audio may not play.")
+        print("Install with: pip install moviepy")
+
 # Import for Persian/Arabic text rendering
 try:
     import arabic_reshaper
@@ -590,6 +604,18 @@ class SettingsTextBox:
         return False
 
 
+def clean_display_text(text: str) -> str:
+    """Remove [.*] tags and \".*\" quoted text from display text"""
+    import re
+    # Remove [...] patterns (emotion tags, etc.)
+    cleaned = re.sub(r'\[.*?\]', '', text)
+    # Remove "..." quoted text patterns
+    cleaned = re.sub(r'"[^"]*"', '', cleaned)
+    # Clean up extra whitespace
+    cleaned = re.sub(r'\s+', ' ', cleaned).strip()
+    return cleaned
+
+
 class ScrollableTextArea:
     """A scrollable text area for dialogue history with gothic noir styling"""
     
@@ -603,10 +629,20 @@ class ScrollableTextArea:
         self.streaming_text = ""
         self.streaming_color = COLOR_TEXT
         
-    def add_message(self, speaker: str, message: str, color: Tuple[int, int, int]):
-        """Add a message to the dialogue"""
+    def add_message(self, speaker: str, message: str, color: Tuple[int, int, int], clean_text: bool = True):
+        """Add a message to the dialogue
+        
+        Args:
+            speaker: Name of the speaker
+            message: The message text
+            color: Text color
+            clean_text: If True, removes [.*] and ".*" patterns from display (default True)
+        """
+        # Clean the message for display if needed (removes emotion tags and quoted text)
+        display_message = clean_display_text(message) if clean_text else message
+        
         # Word wrap the message
-        words = message.split(' ')
+        words = display_message.split(' ')
         current_line = f"{speaker}: "
         max_width = self.rect.width - 40
         is_first_line = True
@@ -693,7 +729,9 @@ class ScrollableTextArea:
         
         # Draw streaming text if active
         if self.streaming_speaker and y_offset < max_y:
-            streaming_full = f"{self.streaming_speaker}: {self.streaming_text}▌"
+            # Clean the streaming text for display
+            cleaned_streaming = clean_display_text(self.streaming_text)
+            streaming_full = f"{self.streaming_speaker}: {cleaned_streaming}▌"
             display_text = reshape_persian_text(streaming_full)
             
             shadow_surface = self.font.render(display_text, True, COLOR_SHADOW)
@@ -1290,6 +1328,16 @@ class DetectiveGame:
             self.door_closed_img = None
             print("⚠ Could not load در بسته.png")
         
+        # Load door open image for hover effect
+        try:
+            self.door_open_img = pygame.image.load("assets/اشیا/در باز.png")
+        except:
+            self.door_open_img = None
+            print("⚠ Could not load در باز.png")
+        
+        # Track door hover state
+        self.door_hovered = False
+        
         # Load intro background (for intro and load_recap states - warm up pages)
         try:
             intro_bg = pygame.image.load("assets/intro.jpg")
@@ -1324,7 +1372,7 @@ class DetectiveGame:
         # Load custom cursor
         try:
             cursor_surface = pygame.image.load("assets/اشیا/قلم.png").convert_alpha()
-            cursor_surface = pygame.transform.smoothscale(cursor_surface, (32, 32))
+            cursor_surface = pygame.transform.smoothscale(cursor_surface, (64, 64))
             self.custom_cursor = pygame.cursors.Cursor((0, 0), cursor_surface)
             pygame.mouse.set_cursor(self.custom_cursor)
         except Exception as e:
@@ -1408,12 +1456,15 @@ class DetectiveGame:
         self.video_playing = False
         self.video_capture = None
         self.video_surface = None
-        self.video_clock = pygame.time.Clock()
         self.video_fps = 30
+        self.video_frame_time = 0  # Time accumulator for frame timing
+        self.video_frame_duration = 1000 / 30  # ms per frame (will be updated)
         self.video_path = "assets/videos/main.mp4"
+        self.video_audio_path = "assets/videos/main.mp3"  # Separate audio file
         self.video_skip_button = None  # Will be created when video starts
         self.video_ended = False
         self.video_shown_this_session = False  # Track if video was already shown
+        self.video_start_time = 0  # Track when video started for sync
         
         # Intro streaming state
         self.intro_text = ""
@@ -1438,7 +1489,7 @@ class DetectiveGame:
             "راهبه",
             "تاجر",
             "سرباز",
-            "پسرک (لوییس)",
+            "پسرک",
             "آشپز"
         ]
         
@@ -1446,6 +1497,17 @@ class DetectiveGame:
         for i, name in enumerate(suspect_names):
             button = Button(0, 0, 400, 100, name, FONT_FARSI_SMALL, COLOR_BUTTON)
             self.suspect_buttons.append(button)
+        
+        # Back button for suspect selection screen
+        self.suspect_back_button = Button(
+            SCREEN_WIDTH // 2 - 100,
+            SCREEN_HEIGHT - 80,
+            200,
+            50,
+            "بازگشت به منو",
+            FONT_FARSI_SMALL,
+            COLOR_ACCENT
+        )
         
         # Load character thumbnails for selection screen
         self.character_thumbnails = []
@@ -1572,9 +1634,12 @@ class DetectiveGame:
             # Save main theme position before switching away
             if self.current_music == "main":
                 try:
-                    self.main_theme_position = pygame.mixer.music.get_pos() / 1000.0  # Convert ms to seconds
+                    pos = pygame.mixer.music.get_pos()
+                    if pos > 0:  # Only save if valid position
+                        self.main_theme_position = pos / 1000.0
+                        print(f"💾 Saved main theme position: {self.main_theme_position:.1f}s")
                 except:
-                    self.main_theme_position = 0.0
+                    pass
             
             # Start fade out and queue the new music
             self.pending_music = music_key
@@ -1595,17 +1660,22 @@ class DetectiveGame:
                 
                 # If resuming main theme, start from saved position
                 if music_key == "main" and self.main_theme_position > 0:
-                    pygame.mixer.music.play(-1, start=self.main_theme_position, fade_ms=self.music_fade_time)
-                    print(f"🎵 Resuming main theme from {self.main_theme_position:.1f}s")
+                    try:
+                        pygame.mixer.music.play(-1, start=self.main_theme_position, fade_ms=self.music_fade_time)
+                        print(f"🎵 Resuming main theme from {self.main_theme_position:.1f}s")
+                    except TypeError:
+                        # Older pygame versions don't support start parameter
+                        pygame.mixer.music.play(-1, fade_ms=self.music_fade_time)
+                        print(f"🎵 Playing main theme (resume not supported in this pygame version)")
                 else:
                     pygame.mixer.music.play(-1, fade_ms=self.music_fade_time)  # Loop with fade in
                     if music_key == "main":
                         self.main_theme_position = 0.0  # Reset position for fresh start
+                    print(f"🎵 Playing music: {music_path}")
                 
                 self.current_music = music_key
                 self.is_fading_out = False
                 self.pending_music = None
-                print(f"🎵 Playing music: {music_path}")
             except Exception as e:
                 print(f"⚠ Could not play music {music_path}: {e}")
                 self.is_fading_out = False
@@ -1628,7 +1698,10 @@ class DetectiveGame:
         # Save main theme position before stopping
         if self.current_music == "main" and pygame.mixer.music.get_busy():
             try:
-                self.main_theme_position = pygame.mixer.music.get_pos() / 1000.0
+                pos = pygame.mixer.music.get_pos()
+                if pos > 0:  # Only save if valid position
+                    self.main_theme_position = pos / 1000.0
+                    print(f"💾 Saved main theme position: {self.main_theme_position:.1f}s")
             except:
                 pass
         pygame.mixer.music.fadeout(self.music_fade_time)
@@ -1670,11 +1743,67 @@ class DetectiveGame:
             
             # Get video properties
             self.video_fps = self.video_capture.get(cv2.CAP_PROP_FPS) or 30
+            self.video_frame_duration = 1000.0 / self.video_fps  # ms per frame
+            self.video_frame_time = 0
             self.video_playing = True
             self.video_ended = False
+            self.video_start_time = pygame.time.get_ticks()
             
-            # Stop main theme music during video
-            self._stop_music()
+            # Save main theme position and stop music immediately (not fade) for video
+            if self.current_music == "main" and pygame.mixer.music.get_busy():
+                try:
+                    pos = pygame.mixer.music.get_pos()
+                    if pos > 0:
+                        self.main_theme_position = pos / 1000.0
+                        print(f"💾 Saved main theme position before video: {self.main_theme_position:.1f}s")
+                except:
+                    pass
+            pygame.mixer.music.stop()  # Stop immediately, not fade
+            self.current_music = None
+            
+            # Try to play the video's audio track
+            audio_loaded = False
+            
+            # First check if there's a separate audio file (mp3)
+            audio_path = Path(self.video_audio_path)
+            print(f"🔍 Looking for video audio at: {audio_path} (exists: {audio_path.exists()})")
+            if audio_path.exists():
+                try:
+                    pygame.mixer.music.load(str(audio_path))
+                    pygame.mixer.music.set_volume(0.7)
+                    pygame.mixer.music.play()
+                    audio_loaded = True
+                    print(f"🔊 Playing video audio from: {audio_path}")
+                except Exception as e:
+                    print(f"⚠ Could not play separate audio file: {e}")
+            
+            # If no separate audio, try to extract using moviepy
+            if not audio_loaded and MOVIEPY_SUPPORT:
+                try:
+                    # Extract audio to temp file
+                    import tempfile
+                    import os
+                    temp_audio = os.path.join(tempfile.gettempdir(), "video_audio_temp.mp3")
+                    
+                    print("🔄 Extracting audio from video...")
+                    video_clip = VideoFileClip(str(video_path))
+                    if video_clip.audio is not None:
+                        video_clip.audio.write_audiofile(temp_audio, verbose=False, logger=None)
+                        video_clip.close()
+                        
+                        pygame.mixer.music.load(temp_audio)
+                        pygame.mixer.music.set_volume(0.7)
+                        pygame.mixer.music.play()
+                        audio_loaded = True
+                        print(f"🔊 Playing extracted audio")
+                    else:
+                        video_clip.close()
+                        print("⚠ Video has no audio track")
+                except Exception as e:
+                    print(f"⚠ Could not extract audio with moviepy: {e}")
+            
+            if not audio_loaded:
+                print("⚠ Video will play without audio")
             
             # Create skip button
             self.video_skip_button = Button(
@@ -1685,21 +1814,42 @@ class DetectiveGame:
                 COLOR_BUTTON
             )
             
-            print(f"🎬 Playing video: {self.video_path} at {self.video_fps} FPS")
+            print(f"🎬 Playing video: {self.video_path} at {self.video_fps:.1f} FPS ({self.video_frame_duration:.1f}ms per frame)")
         except Exception as e:
             print(f"⚠ Error starting video: {e}")
             self._end_video()
     
-    def _update_video(self):
-        """Update video frame"""
+    def _update_video(self, dt):
+        """Update video frame with proper timing
+        
+        Args:
+            dt: Delta time in milliseconds
+        """
         if not self.video_playing or not self.video_capture:
             return None
         
-        ret, frame = self.video_capture.read()
-        if not ret:
-            # Video ended
-            self._end_video()
-            return None
+        # Accumulate time
+        self.video_frame_time += dt
+        
+        # Check if it's time for a new frame
+        if self.video_frame_time < self.video_frame_duration:
+            return self.video_surface  # Return current frame, not time for new one yet
+        
+        # Calculate how many frames to skip (in case of lag)
+        frames_to_advance = int(self.video_frame_time / self.video_frame_duration)
+        self.video_frame_time = self.video_frame_time % self.video_frame_duration
+        
+        # Read frames (skip if needed to stay in sync)
+        frame = None
+        for _ in range(frames_to_advance):
+            ret, frame = self.video_capture.read()
+            if not ret:
+                # Video ended
+                self._end_video()
+                return None
+        
+        if frame is None:
+            return self.video_surface
         
         # Convert BGR to RGB
         frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
@@ -1736,6 +1886,9 @@ class DetectiveGame:
         if self.video_capture:
             self.video_capture.release()
             self.video_capture = None
+        
+        # Stop video audio
+        pygame.mixer.music.stop()
         
         self.video_playing = False
         self.video_surface = None
@@ -2038,6 +2191,11 @@ class DetectiveGame:
         self.case_files_scroll = 0  # Scroll offset for case files text
         self.credits_scroll = 0  # Scroll offset for credits/about page
         
+        # Hover states for notebook and case file buttons
+        self.notebook_hovered = False
+        self.case_file_hovered = False
+        self.case_file_hover_angle = 0.0  # For rotation animation
+        
         # Set sample intro text for debugging if not already set
         if not self.game_state.case_files_text:
             self.game_state.case_files_text = """در اتاق بازجویی سرد و تاریک، شش چهره مرموز نشسته‌اند. لباس‌های قرون وسطایی‌شان با دیوارهای مدرن تضاد عجیبی دارد.
@@ -2124,9 +2282,15 @@ class DetectiveGame:
             aspect_ratio = orig_w / orig_h
             door_btn_width = int(door_btn_height * aspect_ratio)
             self.door_btn_img_scaled = pygame.transform.smoothscale(self.door_closed_img, (door_btn_width, door_btn_height))
+            # Also scale the open door image
+            if self.door_open_img:
+                self.door_btn_open_img_scaled = pygame.transform.smoothscale(self.door_open_img, (door_btn_width, door_btn_height))
+            else:
+                self.door_btn_open_img_scaled = None
         else:
             door_btn_width = 100
             self.door_btn_img_scaled = None
+            self.door_btn_open_img_scaled = None
         
         self.end_day_door_button = Button(
             portrait_x + 30,
@@ -2158,8 +2322,21 @@ class DetectiveGame:
         else:
             self.notebook_btn_img_scaled = None
         
+        # Scale open notebook image for hover effect
+        if self.notebook_open_img:
+            self.notebook_btn_open_img_scaled = pygame.transform.smoothscale(self.notebook_open_img, (notebook_btn_size, notebook_btn_size))
+            # Also create a slightly larger version for hover
+            hover_size = notebook_btn_size + 6
+            self.notebook_btn_open_img_hover = pygame.transform.smoothscale(self.notebook_open_img, (hover_size, hover_size))
+            self.notebook_btn_img_hover = pygame.transform.smoothscale(self.notebook_closed_img, (hover_size, hover_size)) if self.notebook_closed_img else None
+        else:
+            self.notebook_btn_open_img_scaled = None
+            self.notebook_btn_open_img_hover = None
+            self.notebook_btn_img_hover = None
+        
         # Case files toggle button (left side of table area - 1/3 from left edge)
         case_files_btn_size = 80
+        self.case_files_btn_size = case_files_btn_size  # Store for hover calculations
         self.case_files_toggle_button = Button(
             portrait_x + portrait_width // 3 - case_files_btn_size // 2,  # 1/3 from left edge
             portrait_y + portrait_height - case_files_btn_size - 15,
@@ -2174,8 +2351,12 @@ class DetectiveGame:
         # Scale case files button image if loaded
         if self.case_files_icon_img:
             self.case_files_btn_img_scaled = pygame.transform.smoothscale(self.case_files_icon_img, (case_files_btn_size, case_files_btn_size))
+            # Create larger version for hover
+            hover_size = case_files_btn_size + 6
+            self.case_files_btn_img_hover = pygame.transform.smoothscale(self.case_files_icon_img, (hover_size, hover_size))
         else:
             self.case_files_btn_img_scaled = None
+            self.case_files_btn_img_hover = None
         
         # Close notebook button (shown when notebook is open)
         self.notebook_close_button = Button(
@@ -2916,23 +3097,45 @@ class DetectiveGame:
         self.accuse_button.draw(self.screen)
         self.game_menu_button.draw(self.screen)
         
-        # Door button for end day (top left of portrait)
-        if self.door_btn_img_scaled:
-            img_x = self.end_day_door_button.rect.x
-            img_y = self.end_day_door_button.rect.y
+        # Door button for end day (top left of portrait) - show open door on hover
+        img_x = self.end_day_door_button.rect.x
+        img_y = self.end_day_door_button.rect.y
+        
+        # Check if mouse is hovering over door
+        mouse_pos = pygame.mouse.get_pos()
+        self.door_hovered = self.end_day_door_button.rect.collidepoint(mouse_pos)
+        
+        if self.door_hovered and self.door_btn_open_img_scaled:
+            # Show open door on hover
+            self.screen.blit(self.door_btn_open_img_scaled, (img_x, img_y))
+        elif self.door_btn_img_scaled:
+            # Show closed door normally
             self.screen.blit(self.door_btn_img_scaled, (img_x, img_y))
         
-        # Notebook toggle button with image (right side of table)
-        if self.notebook_btn_img_scaled:
-            # Just draw the image directly at button position
-            img_x = self.notebook_toggle_button.rect.x
-            img_y = self.notebook_toggle_button.rect.y
+        # Notebook toggle button with image (right side of table) - show open notebook on hover
+        img_x = self.notebook_toggle_button.rect.x
+        img_y = self.notebook_toggle_button.rect.y
+        self.notebook_hovered = self.notebook_toggle_button.rect.collidepoint(mouse_pos)
+        
+        if self.notebook_hovered and self.notebook_btn_open_img_hover:
+            # Show open notebook, larger, on hover (offset to keep centered)
+            hover_offset = 3  # Half of size increase (6/2)
+            self.screen.blit(self.notebook_btn_open_img_hover, (img_x - hover_offset, img_y - hover_offset))
+        elif self.notebook_btn_img_scaled:
             self.screen.blit(self.notebook_btn_img_scaled, (img_x, img_y))
         
-        # Case files toggle button with image (left of notebook button)
-        if self.case_files_btn_img_scaled:
-            img_x = self.case_files_toggle_button.rect.x
-            img_y = self.case_files_toggle_button.rect.y
+        # Case files toggle button with image (left of notebook button) - rotate and enlarge on hover
+        img_x = self.case_files_toggle_button.rect.x
+        img_y = self.case_files_toggle_button.rect.y
+        self.case_file_hovered = self.case_files_toggle_button.rect.collidepoint(mouse_pos)
+        
+        if self.case_file_hovered and self.case_files_btn_img_hover:
+            # Rotate and enlarge on hover
+            rotated_img = pygame.transform.rotate(self.case_files_btn_img_hover, 15)  # 15 degree rotation
+            # Get new rect to center properly
+            rotated_rect = rotated_img.get_rect(center=(img_x + self.case_files_btn_size // 2, img_y + self.case_files_btn_size // 2))
+            self.screen.blit(rotated_img, rotated_rect)
+        elif self.case_files_btn_img_scaled:
             self.screen.blit(self.case_files_btn_img_scaled, (img_x, img_y))
         
         # Thinking indicator with pulsing glow
@@ -3030,7 +3233,9 @@ class DetectiveGame:
         
         # Draw streaming text if active - with word wrapping and shadows
         if self.dialogue_area.streaming_speaker and y_offset < max_y:
-            streaming_full = f"{self.dialogue_area.streaming_speaker}: {self.dialogue_area.streaming_text}▌"
+            # Clean the streaming text for display
+            cleaned_streaming = clean_display_text(self.dialogue_area.streaming_text)
+            streaming_full = f"{self.dialogue_area.streaming_speaker}: {cleaned_streaming}▌"
             # Wrap streaming text into multiple lines
             words = streaming_full.split(' ')
             current_line = ""
@@ -3484,6 +3689,10 @@ class DetectiveGame:
             # Update button rect for click detection
             button.rect = card_rect
         
+        # Draw back button (update is called in main update loop)
+        self.suspect_back_button.is_hovered = self.suspect_back_button.rect.collidepoint(mouse_pos)
+        self.suspect_back_button.draw(self.screen)
+        
         # Draw vignette
         draw_vignette(self.screen)
     
@@ -3532,17 +3741,31 @@ class DetectiveGame:
                                  FONT_FARSI_SMALL, (180, 170, 150),
                                  (SCREEN_WIDTH // 2, text_start_y + 95), shadow_offset=1, center=True)
         
-        # Case files button (bottom left corner)
+        # Case files button (bottom left corner) - with hover effect
         end_btn_size = 80
         case_files_end_x = 20
         case_files_end_y = SCREEN_HEIGHT - end_btn_size - 20
-        if self.case_files_btn_img_scaled:
+        mouse_pos = pygame.mouse.get_pos()
+        case_files_end_rect = pygame.Rect(case_files_end_x, case_files_end_y, end_btn_size, end_btn_size)
+        case_files_end_hovered = case_files_end_rect.collidepoint(mouse_pos)
+        
+        if case_files_end_hovered and self.case_files_btn_img_hover:
+            rotated_img = pygame.transform.rotate(self.case_files_btn_img_hover, 15)
+            rotated_rect = rotated_img.get_rect(center=(case_files_end_x + end_btn_size // 2, case_files_end_y + end_btn_size // 2))
+            self.screen.blit(rotated_img, rotated_rect)
+        elif self.case_files_btn_img_scaled:
             self.screen.blit(self.case_files_btn_img_scaled, (case_files_end_x, case_files_end_y))
         
-        # Notebook button (to the right of case files)
+        # Notebook button (to the right of case files) - with hover effect
         notebook_end_x = case_files_end_x + end_btn_size + 15
         notebook_end_y = case_files_end_y
-        if self.notebook_btn_img_scaled:
+        notebook_end_rect = pygame.Rect(notebook_end_x, notebook_end_y, end_btn_size, end_btn_size)
+        notebook_end_hovered = notebook_end_rect.collidepoint(mouse_pos)
+        
+        if notebook_end_hovered and self.notebook_btn_open_img_hover:
+            hover_offset = 3
+            self.screen.blit(self.notebook_btn_open_img_hover, (notebook_end_x - hover_offset, notebook_end_y - hover_offset))
+        elif self.notebook_btn_img_scaled:
             self.screen.blit(self.notebook_btn_img_scaled, (notebook_end_x, notebook_end_y))
         
         # Store positions for click detection on end screen
@@ -3827,6 +4050,11 @@ class DetectiveGame:
                 if event.type == pygame.MOUSEBUTTONDOWN:
                     mouse_pos = event.pos
                     
+                    # Check back button first
+                    if self.suspect_back_button.rect.collidepoint(mouse_pos):
+                        self.state = "menu"
+                        continue
+                    
                     # Match the layout from _draw_suspect_selection_state
                     thumb_width = int(SCREEN_WIDTH * 0.18)
                     thumb_height = int(SCREEN_HEIGHT * 0.28)
@@ -3934,9 +4162,9 @@ class DetectiveGame:
         dt_seconds = dt / 1000.0
         self.animation_timer += dt_seconds
         
-        # Update video if playing
+        # Update video if playing (pass dt in milliseconds for frame timing)
         if self.state == "video" and self.video_playing:
-            self._update_video()
+            self._update_video(dt)
             # Update skip button
             if self.video_skip_button:
                 self.video_skip_button.update(dt_seconds)
@@ -3986,6 +4214,12 @@ class DetectiveGame:
             self.menu_credits_button.update(dt_seconds)
         if hasattr(self, 'menu_settings_button'):
             self.menu_settings_button.update(dt_seconds)
+        if hasattr(self, 'menu_delete_save_button'):
+            self.menu_delete_save_button.update(dt_seconds)
+        if hasattr(self, 'menu_exit_button'):
+            self.menu_exit_button.update(dt_seconds)
+        if hasattr(self, 'suspect_back_button'):
+            self.suspect_back_button.update(dt_seconds)
         if hasattr(self, 'credits_back_button'):
             self.credits_back_button.update(dt_seconds)
         if hasattr(self, 'settings_save_button'):
