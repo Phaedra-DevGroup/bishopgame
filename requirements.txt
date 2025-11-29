@@ -1,0 +1,11 @@
+pygame>=2.5.0
+llama-index>=0.10.0
+llama-index-llms-ollama>=0.1.0
+llama-index-core>=0.10.0
+llama-index-embeddings-huggingface>=0.1.0
+Pillow>=10.0.0
+arabic-reshaper>=3.0.0
+python-bidi>=0.4.2
+sentence-transformers>=2.0.0
+huggingface-hub>=0.20.0
+openai>=1.0.0
