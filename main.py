@@ -14,6 +14,16 @@ from game_state import GameState
 import game_data
 import settings as ai_settings
 
+# Import OpenCV for video playback
+try:
+    import cv2
+    import numpy as np
+    VIDEO_SUPPORT = True
+except ImportError:
+    VIDEO_SUPPORT = False
+    print("Warning: opencv-python not installed. Video playback will be skipped.")
+    print("Install with: pip install opencv-python")
+
 # Import for Persian/Arabic text rendering
 try:
     import arabic_reshaper
@@ -43,6 +53,18 @@ def to_persian_number(num) -> str:
 
 # Initialize Pygame
 pygame.init()
+pygame.mixer.init()
+
+# Music file paths - mapping suspect IDs to their theme music
+MUSIC_THEMES = {
+    "main": "assets/sfx/main_theme.mp3",
+    1: "assets/sfx/The_Murder_of_the_Beggar__The_Smither.mp3",      # Blacksmith/آهنگر
+    2: "assets/sfx/The_Murder_of_the_Beggar__The_Nun.mp3",          # Nun/راهبه
+    3: "assets/sfx/The_Murder_of_the_Beggar__The_Merchant.mp3",     # Merchant/تاجر
+    4: "assets/sfx/The_Murder_of_the_Beggar__The_Soldier.mp3",      # Soldier/سرباز
+    5: "assets/sfx/The_Murder_of_the_Beggar__The_Kid.mp3",          # Kid/کودک
+    6: "assets/sfx/The_Murder_of_the_Beggar__The_Chef.mp3",         # Chef/آشپز
+}
 
 # Helper function to blur a surface (using scale down/up method)
 def blur_surface(surface, amount=4):
@@ -1373,6 +1395,25 @@ class DetectiveGame:
         
         # Music toggle state
         self.music_enabled = True
+        self.current_music = None  # Track which music is currently playing
+        self.main_theme_position = 0.0  # Track main theme position for resume
+        self.music_fade_time = 2000  # 2 seconds fade in/out in milliseconds
+        self.pending_music = None  # Track music to play after fade out
+        self.is_fading_out = False  # Track if we're currently fading out
+        
+        # Start main theme music
+        self._play_music("main")
+        
+        # Video playback state
+        self.video_playing = False
+        self.video_capture = None
+        self.video_surface = None
+        self.video_clock = pygame.time.Clock()
+        self.video_fps = 30
+        self.video_path = "assets/videos/main.mp4"
+        self.video_skip_button = None  # Will be created when video starts
+        self.video_ended = False
+        self.video_shown_this_session = False  # Track if video was already shown
         
         # Intro streaming state
         self.intro_text = ""
@@ -1512,6 +1553,215 @@ class DetectiveGame:
         
         # Track API mode state for the toggle
         self.settings_api_mode = current_settings.get("isApiAvailable", False)
+    
+    def _play_music(self, music_key, force_restart=False):
+        """Play music based on the key (suspect ID or 'main') with fade effects"""
+        if not self.music_enabled:
+            pygame.mixer.music.stop()
+            self.current_music = None
+            self.is_fading_out = False
+            self.pending_music = None
+            return
+        
+        # Don't restart if same music is already playing (unless forced)
+        if self.current_music == music_key and pygame.mixer.music.get_busy() and not force_restart:
+            return
+        
+        # If music is currently playing, fade out first then play new music
+        if pygame.mixer.music.get_busy() and self.current_music is not None:
+            # Save main theme position before switching away
+            if self.current_music == "main":
+                try:
+                    self.main_theme_position = pygame.mixer.music.get_pos() / 1000.0  # Convert ms to seconds
+                except:
+                    self.main_theme_position = 0.0
+            
+            # Start fade out and queue the new music
+            self.pending_music = music_key
+            self.is_fading_out = True
+            pygame.mixer.music.fadeout(self.music_fade_time)
+            return
+        
+        # Actually load and play the music
+        self._load_and_play_music(music_key)
+    
+    def _load_and_play_music(self, music_key):
+        """Load and play music with fade in effect"""
+        music_path = MUSIC_THEMES.get(music_key)
+        if music_path and Path(music_path).exists():
+            try:
+                pygame.mixer.music.load(music_path)
+                pygame.mixer.music.set_volume(0.5)  # 50% volume
+                
+                # If resuming main theme, start from saved position
+                if music_key == "main" and self.main_theme_position > 0:
+                    pygame.mixer.music.play(-1, start=self.main_theme_position, fade_ms=self.music_fade_time)
+                    print(f"🎵 Resuming main theme from {self.main_theme_position:.1f}s")
+                else:
+                    pygame.mixer.music.play(-1, fade_ms=self.music_fade_time)  # Loop with fade in
+                    if music_key == "main":
+                        self.main_theme_position = 0.0  # Reset position for fresh start
+                
+                self.current_music = music_key
+                self.is_fading_out = False
+                self.pending_music = None
+                print(f"🎵 Playing music: {music_path}")
+            except Exception as e:
+                print(f"⚠ Could not play music {music_path}: {e}")
+                self.is_fading_out = False
+                self.pending_music = None
+        else:
+            print(f"⚠ Music file not found: {music_path}")
+            self.is_fading_out = False
+            self.pending_music = None
+    
+    def _update_music(self):
+        """Check if fade out completed and play pending music"""
+        if self.is_fading_out and not pygame.mixer.music.get_busy():
+            # Fade out completed, play the pending music
+            if self.pending_music is not None:
+                self._load_and_play_music(self.pending_music)
+            self.is_fading_out = False
+    
+    def _stop_music(self):
+        """Stop all music with fade out"""
+        # Save main theme position before stopping
+        if self.current_music == "main" and pygame.mixer.music.get_busy():
+            try:
+                self.main_theme_position = pygame.mixer.music.get_pos() / 1000.0
+            except:
+                pass
+        pygame.mixer.music.fadeout(self.music_fade_time)
+        self.current_music = None
+        self.is_fading_out = False
+        self.pending_music = None
+    
+    def _toggle_music(self):
+        """Toggle music on/off"""
+        self.music_enabled = not self.music_enabled
+        if self.music_enabled:
+            # Resume appropriate music based on current state
+            if self.state == "playing":
+                self._play_music(self.current_suspect)
+            else:
+                self._play_music("main")
+        else:
+            self._stop_music()
+    
+    def _start_video(self):
+        """Start playing the intro video"""
+        if not VIDEO_SUPPORT:
+            print("⚠ Video support not available, skipping video")
+            self._end_video()
+            return
+        
+        video_path = Path(self.video_path)
+        if not video_path.exists():
+            print(f"⚠ Video file not found: {self.video_path}")
+            self._end_video()
+            return
+        
+        try:
+            self.video_capture = cv2.VideoCapture(str(video_path))
+            if not self.video_capture.isOpened():
+                print(f"⚠ Could not open video: {self.video_path}")
+                self._end_video()
+                return
+            
+            # Get video properties
+            self.video_fps = self.video_capture.get(cv2.CAP_PROP_FPS) or 30
+            self.video_playing = True
+            self.video_ended = False
+            
+            # Stop main theme music during video
+            self._stop_music()
+            
+            # Create skip button
+            self.video_skip_button = Button(
+                SCREEN_WIDTH - 200, SCREEN_HEIGHT - 80,
+                150, 50,
+                "رد کردن ❯❯",
+                FONT_FARSI,
+                COLOR_BUTTON
+            )
+            
+            print(f"🎬 Playing video: {self.video_path} at {self.video_fps} FPS")
+        except Exception as e:
+            print(f"⚠ Error starting video: {e}")
+            self._end_video()
+    
+    def _update_video(self):
+        """Update video frame"""
+        if not self.video_playing or not self.video_capture:
+            return None
+        
+        ret, frame = self.video_capture.read()
+        if not ret:
+            # Video ended
+            self._end_video()
+            return None
+        
+        # Convert BGR to RGB
+        frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+        
+        # Resize frame to fit screen while maintaining aspect ratio
+        frame_height, frame_width = frame.shape[:2]
+        scale = min(SCREEN_WIDTH / frame_width, SCREEN_HEIGHT / frame_height)
+        new_width = int(frame_width * scale)
+        new_height = int(frame_height * scale)
+        frame = cv2.resize(frame, (new_width, new_height))
+        
+        # Convert to pygame surface
+        # Note: pygame expects (width, height) but numpy gives (height, width)
+        self.video_surface = pygame.surfarray.make_surface(np.transpose(frame, (1, 0, 2)))
+        
+        return self.video_surface
+    
+    def _draw_video_state(self):
+        """Draw the video playback state"""
+        self.screen.fill((0, 0, 0))  # Black background
+        
+        if self.video_surface:
+            # Center the video
+            x = (SCREEN_WIDTH - self.video_surface.get_width()) // 2
+            y = (SCREEN_HEIGHT - self.video_surface.get_height()) // 2
+            self.screen.blit(self.video_surface, (x, y))
+        
+        # Draw skip button
+        if self.video_skip_button:
+            self.video_skip_button.draw(self.screen)
+    
+    def _end_video(self):
+        """End video playback and proceed to next state"""
+        if self.video_capture:
+            self.video_capture.release()
+            self.video_capture = None
+        
+        self.video_playing = False
+        self.video_surface = None
+        self.video_ended = True
+        self.video_shown_this_session = True
+        
+        # Resume main theme music
+        self._play_music("main")
+        
+        # Proceed to the next state (intro or load_recap)
+        self._proceed_after_video()
+    
+    def _proceed_after_video(self):
+        """Determine next state after video ends"""
+        if self.game_state.current_day == 1 and not self.game_state.intro_shown:
+            print("DEBUG: Starting intro after video!")
+            self.state = "intro"
+            self.game_state.intro_shown = True
+            self._start_intro_streaming()
+        elif self.game_state.intro_shown and not self.load_recap_complete:
+            print("DEBUG: Starting load recap after video")
+            self.state = "load_recap"
+            self._start_load_recap()
+        else:
+            print("DEBUG: Going to suspect selection after video")
+            self.state = "suspect_selection"
         
     def _init_ai_engine(self):
         """Initialize AI engine in background thread"""
@@ -1978,6 +2228,9 @@ class DetectiveGame:
         
         # Return to playing state
         self.state = "playing"
+        
+        # Play the suspect's theme music
+        self._play_music(suspect_id)
     
     def _delete_save(self):
         """Delete the save file and reset game state"""
@@ -2140,8 +2393,13 @@ class DetectiveGame:
             # Return to playing state with current suspect
             self.state = "playing"
         else:
+            # Show video first if it hasn't been shown this session and it's a new game or loading
+            if not self.video_shown_this_session:
+                print("DEBUG: Starting video!")
+                self.state = "video"
+                self._start_video()
             # Show intro on day 1 if we haven't shown it yet (NEW GAME)
-            if self.game_state.current_day == 1 and not self.game_state.intro_shown:
+            elif self.game_state.current_day == 1 and not self.game_state.intro_shown:
                 print("DEBUG: Starting intro!")
                 self.state = "intro"  # Go to intro first
                 self.game_state.intro_shown = True
@@ -3368,8 +3626,7 @@ class DetectiveGame:
                     if os.path.exists("savegame.json"):
                         self._delete_save()
                 if self.menu_music_button.handle_event(event):
-                    self.music_enabled = not self.music_enabled
-                    # Music functionality placeholder - would control audio here
+                    self._toggle_music()
                 if self.menu_credits_button.handle_event(event):
                     self.state = "credits"
                 if self.menu_settings_button.handle_event(event):
@@ -3379,6 +3636,13 @@ class DetectiveGame:
                     self._create_settings_ui()
                 if self.menu_exit_button.handle_event(event):
                     self.running = False
+            
+            elif self.state == "video":
+                # Handle skip button or escape to skip video
+                if event.type == pygame.KEYDOWN and event.key == pygame.K_ESCAPE:
+                    self._end_video()
+                if self.video_skip_button and self.video_skip_button.handle_event(event):
+                    self._end_video()
             
             elif self.state == "settings":
                 # Ensure settings UI is initialized
@@ -3670,6 +3934,27 @@ class DetectiveGame:
         dt_seconds = dt / 1000.0
         self.animation_timer += dt_seconds
         
+        # Update video if playing
+        if self.state == "video" and self.video_playing:
+            self._update_video()
+            # Update skip button
+            if self.video_skip_button:
+                self.video_skip_button.update(dt_seconds)
+        
+        # Update music fade transitions
+        self._update_music()
+        
+        # Update music based on current state (only if not currently fading and not in video)
+        if self.music_enabled and not self.is_fading_out and self.state != "video":
+            if self.state == "playing" and self.current_suspect:
+                # Play suspect's theme when in chat/playing state
+                if self.current_music != self.current_suspect:
+                    self._play_music(self.current_suspect)
+            elif self.state != "playing":
+                # Play main theme for all other states
+                if self.current_music != "main":
+                    self._play_music("main")
+        
         # Update all buttons for hover animations
         if hasattr(self, 'menu_start_button'):
             self.menu_start_button.update(dt_seconds)
@@ -3778,6 +4063,8 @@ class DetectiveGame:
             self._draw_loading_state()
         elif self.state == "menu":
             self._draw_menu_state()
+        elif self.state == "video":
+            self._draw_video_state()
         elif self.state == "credits":
             self._draw_credits_state()
         elif self.state == "settings":

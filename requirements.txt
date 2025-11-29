@@ -9,3 +9,5 @@ python-bidi>=0.4.2
 sentence-transformers>=2.0.0
 huggingface-hub>=0.20.0
 openai>=1.0.0
+opencv-python>=4.8.0
+numpy>=1.24.0
