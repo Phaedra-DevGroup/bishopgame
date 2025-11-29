@@ -552,6 +552,18 @@ class AIDetectiveEngine:
         
         system_prompt = self._create_system_prompt(suspect_id)
         
+        # DEBUG: Save full system prompt to file for verification
+        debug_file = f"debug_prompt_suspect_{suspect_id}.txt"
+        try:
+            with open(debug_file, 'w', encoding='utf-8') as f:
+                f.write(f"=== SYSTEM PROMPT FOR SUSPECT {suspect_id} ===\n")
+                f.write(f"Length: {len(system_prompt)} characters\n")
+                f.write("="*60 + "\n\n")
+                f.write(system_prompt)
+            print(f"           [DEBUG] Saved full prompt to {debug_file}")
+        except Exception as e:
+            print(f"           [DEBUG] Could not save prompt: {e}")
+        
         # Initialize chat history for this suspect if needed
         if suspect_id not in self.api_chat_histories:
             self.api_chat_histories[suspect_id] = []
@@ -606,6 +618,19 @@ class AIDetectiveEngine:
         if suspect_id not in self.chat_engines:
             print(f"           Creating NEW chat engine (first conversation)")
             system_prompt = self._create_system_prompt(suspect_id)
+            
+            # DEBUG: Save full system prompt to file for verification
+            debug_file = f"debug_prompt_suspect_{suspect_id}.txt"
+            try:
+                with open(debug_file, 'w', encoding='utf-8') as f:
+                    f.write(f"=== SYSTEM PROMPT FOR SUSPECT {suspect_id} ===\n")
+                    f.write(f"Length: {len(system_prompt)} characters\n")
+                    f.write("="*60 + "\n\n")
+                    f.write(system_prompt)
+                print(f"           [DEBUG] Saved full prompt to {debug_file}")
+            except Exception as e:
+                print(f"           [DEBUG] Could not save prompt: {e}")
+            
             prompt_preview = system_prompt[:150].replace('\n', ' ')
             print(f"           System prompt: {prompt_preview}...")
             

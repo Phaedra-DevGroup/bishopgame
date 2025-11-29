@@ -7,8 +7,16 @@ import pygame
 import sys
 import threading
 import math
+import os
 from pathlib import Path
 from typing import List, Tuple, Optional
+
+# Redirect stdout/stderr to devnull if running with pythonw (no console)
+# This prevents crashes when print() is called with no console attached
+if sys.executable.endswith('pythonw.exe') or not sys.stdout:
+    sys.stdout = open(os.devnull, 'w')
+    sys.stderr = open(os.devnull, 'w')
+
 from ai_handler import AIDetectiveEngine
 from game_state import GameState
 import game_data
@@ -127,6 +135,35 @@ def blur_surface(surface, amount=4):
     blurred = pygame.transform.smoothscale(small_surface, orig_size)
     
     return blurred
+
+def scale_to_fill(surface, target_width, target_height):
+    """Scale image to fill the target area completely, cropping if necessary.
+    This maintains aspect ratio and ensures no black bars appear."""
+    orig_width, orig_height = surface.get_size()
+    
+    # Calculate scale factors for both dimensions
+    scale_x = target_width / orig_width
+    scale_y = target_height / orig_height
+    
+    # Use the larger scale factor to ensure the image fills the screen
+    scale = max(scale_x, scale_y)
+    
+    # Calculate new dimensions
+    new_width = int(orig_width * scale)
+    new_height = int(orig_height * scale)
+    
+    # Scale the image
+    scaled = pygame.transform.smoothscale(surface, (new_width, new_height))
+    
+    # Calculate offset to center the image (crop from center)
+    offset_x = (new_width - target_width) // 2
+    offset_y = (new_height - target_height) // 2
+    
+    # Create the final surface and blit the centered portion
+    final_surface = pygame.Surface((target_width, target_height))
+    final_surface.blit(scaled, (-offset_x, -offset_y))
+    
+    return final_surface
 
 # Constants
 SCREEN_WIDTH = 1280
@@ -637,9 +674,9 @@ def clean_display_text(text: str) -> str:
     """Remove [.*] tags and \".*\" quoted text from display text, and filter unsupported characters"""
     import re
     # Remove [...] patterns (emotion tags, etc.)
-    # cleaned = re.sub(r'\[.*?\]', '', text)
+    cleaned = re.sub(r'\[.*?\]', '', text)
     # Remove " quoted text patterns
-    cleaned = re.sub(r'"', '', text)
+    cleaned = re.sub(r'"', '', cleaned)
     # Clean up extra whitespace
     cleaned = re.sub(r'\s+', ' ', cleaned).strip()
     
@@ -1314,8 +1351,8 @@ class DetectiveGame:
         
         # Load menu background
         try:
-            self.menu_background = pygame.image.load("assets/Menu.jpg")
-            self.menu_background = pygame.transform.scale(self.menu_background, (SCREEN_WIDTH, SCREEN_HEIGHT))
+            menu_bg_raw = pygame.image.load("assets/Menu.jpg")
+            self.menu_background = scale_to_fill(menu_bg_raw, SCREEN_WIDTH, SCREEN_HEIGHT)
         except:
             self.menu_background = None
             print("⚠ Could not load Menu.jpg")
@@ -1377,7 +1414,7 @@ class DetectiveGame:
         # Load intro background (for intro and load_recap states - warm up pages)
         try:
             intro_bg = pygame.image.load("assets/intro.jpg")
-            intro_bg = pygame.transform.scale(intro_bg, (SCREEN_WIDTH, SCREEN_HEIGHT))
+            intro_bg = scale_to_fill(intro_bg, SCREEN_WIDTH, SCREEN_HEIGHT)
             self.intro_background = blur_surface(intro_bg, amount=6)  # Apply blur
         except:
             self.intro_background = None
@@ -1386,13 +1423,13 @@ class DetectiveGame:
         # Load accusation background (for accusation state)
         try:
             accusation_bg = pygame.image.load("assets/accusation.jpg")
-            accusation_bg = pygame.transform.scale(accusation_bg, (SCREEN_WIDTH, SCREEN_HEIGHT))
+            accusation_bg = scale_to_fill(accusation_bg, SCREEN_WIDTH, SCREEN_HEIGHT)
             self.accusation_background = blur_surface(accusation_bg, amount=6)  # Apply blur
         except:
             self.accusation_background = None
             print("⚠ Could not load accusation.jpg")
         
-        # Load win/lose end screen backgrounds
+        # Load win/lose end screen backgrounds (scale_to_fill will be applied when drawing)
         try:
             self.win_img = pygame.image.load("assets/پایان/برد.jpg")
         except:
@@ -2047,7 +2084,7 @@ class DetectiveGame:
         if self.menu_background:
             try:
                 original_bg = pygame.image.load("assets/Menu.jpg")
-                self.menu_background = pygame.transform.scale(original_bg, (SCREEN_WIDTH, SCREEN_HEIGHT))
+                self.menu_background = scale_to_fill(original_bg, SCREEN_WIDTH, SCREEN_HEIGHT)
             except:
                 pass
         
@@ -2055,7 +2092,7 @@ class DetectiveGame:
         if self.intro_background:
             try:
                 intro_bg = pygame.image.load("assets/intro.jpg")
-                intro_bg = pygame.transform.scale(intro_bg, (SCREEN_WIDTH, SCREEN_HEIGHT))
+                intro_bg = scale_to_fill(intro_bg, SCREEN_WIDTH, SCREEN_HEIGHT)
                 self.intro_background = blur_surface(intro_bg, amount=6)
             except:
                 pass
@@ -2064,7 +2101,7 @@ class DetectiveGame:
         if self.accusation_background:
             try:
                 accusation_bg = pygame.image.load("assets/accusation.jpg")
-                accusation_bg = pygame.transform.scale(accusation_bg, (SCREEN_WIDTH, SCREEN_HEIGHT))
+                accusation_bg = scale_to_fill(accusation_bg, SCREEN_WIDTH, SCREEN_HEIGHT)
                 self.accusation_background = blur_surface(accusation_bg, amount=6)
             except:
                 pass
@@ -2107,32 +2144,45 @@ class DetectiveGame:
     def _create_ui_elements(self):
         """Create all UI elements with responsive sizing"""
         # Menu buttons
+        # Row 1: Start button
         self.menu_start_button = Button(
             SCREEN_WIDTH // 2 - 150,
-            SCREEN_HEIGHT // 2 - 50,
+            SCREEN_HEIGHT // 2 - 80,
             300,
             60,
             "شروع بازی",
             FONT_FARSI,
             COLOR_BUTTON
         )
-        # Delete save button - color depends on whether save exists
+        
+        # Row 2: Guide button (راهنمای بازی) - right below start
+        self.menu_guide_button = Button(
+            SCREEN_WIDTH // 2 - 150,
+            SCREEN_HEIGHT // 2 - 5,
+            300,
+            50,
+            "📖 راهنمای بازی",
+            FONT_FARSI_SMALL,
+            COLOR_BUTTON
+        )
+        
+        # Row 3: Delete save and Music toggle in same row
         import os
         delete_color = COLOR_ACCENT if os.path.exists("savegame.json") else COLOR_PANEL
         self.menu_delete_save_button = Button(
             SCREEN_WIDTH // 2 - 150,
-            SCREEN_HEIGHT // 2 + 30,
-            300,
+            SCREEN_HEIGHT // 2 + 60,
+            145,
             50,
             "حذف ذخیره",
-            FONT_FARSI,
+            FONT_FARSI_SMALL,
             delete_color
         )
         
-        # Music toggle button (green when on)
+        # Music toggle button (green when on) - same row as delete
         self.menu_music_button = Button(
-            SCREEN_WIDTH // 2 - 150,
-            SCREEN_HEIGHT // 2 + 95,
+            SCREEN_WIDTH // 2 + 5,
+            SCREEN_HEIGHT // 2 + 60,
             145,
             50,
             "🎵 موسیقی",
@@ -2140,10 +2190,21 @@ class DetectiveGame:
             (60, 100, 70)  # Muted green for "on" state
         )
         
-        # Credits button
+        # Row 4: Settings and Credits button in same row
+        self.menu_settings_button = Button(
+            SCREEN_WIDTH // 2 - 150,
+            SCREEN_HEIGHT // 2 + 125,
+            145,
+            50,
+            "⚙️ تنظیمات",
+            FONT_FARSI_SMALL,
+            COLOR_BUTTON
+        )
+        
+        # Credits button - same row as settings
         self.menu_credits_button = Button(
             SCREEN_WIDTH // 2 + 5,
-            SCREEN_HEIGHT // 2 + 95,
+            SCREEN_HEIGHT // 2 + 125,
             145,
             50,
             "درباره بازی",
@@ -2151,20 +2212,10 @@ class DetectiveGame:
             COLOR_BUTTON
         )
         
-        # Settings button (AI settings)
-        self.menu_settings_button = Button(
-            SCREEN_WIDTH // 2 - 150,
-            SCREEN_HEIGHT // 2 + 160,
-            300,
-            50,
-            "⚙️ تنظیمات",
-            FONT_FARSI_SMALL,
-            COLOR_BUTTON
-        )
-        
+        # Row 5: Exit button
         self.menu_exit_button = Button(
             SCREEN_WIDTH // 2 - 150,
-            SCREEN_HEIGHT // 2 + 225,
+            SCREEN_HEIGHT // 2 + 190,
             300,
             50,
             "خروج",
@@ -2185,6 +2236,20 @@ class DetectiveGame:
             FONT_FARSI,
             COLOR_BUTTON
         )
+        
+        # Guide back button
+        self.guide_back_button = Button(
+            SCREEN_WIDTH // 2 - 100,
+            SCREEN_HEIGHT - 80,
+            200,
+            50,
+            "بازگشت",
+            FONT_FARSI,
+            COLOR_BUTTON
+        )
+        
+        # Guide scroll position
+        self.guide_scroll = 0
         
         # Intro skip button
         self.intro_skip_button = Button(
@@ -2340,7 +2405,7 @@ class DetectiveGame:
         self.end_day_door_button.hide_background = True
         
         # Notebook toggle button (right side of table area - 1/3 from right edge) - no background, just image
-        notebook_btn_size = 80  # Square button for the notebook icon
+        notebook_btn_size = 80  # Square button for the notebook icon (2x bigger)
         self.notebook_toggle_button = Button(
             portrait_x + portrait_width - portrait_width // 3 - notebook_btn_size // 2,  # 1/3 from right edge
             portrait_y + portrait_height - notebook_btn_size - 15,
@@ -2362,7 +2427,7 @@ class DetectiveGame:
         if self.notebook_open_img:
             self.notebook_btn_open_img_scaled = pygame.transform.smoothscale(self.notebook_open_img, (notebook_btn_size, notebook_btn_size))
             # Also create a slightly larger version for hover
-            hover_size = notebook_btn_size + 6
+            hover_size = notebook_btn_size + 12
             self.notebook_btn_open_img_hover = pygame.transform.smoothscale(self.notebook_open_img, (hover_size, hover_size))
             self.notebook_btn_img_hover = pygame.transform.smoothscale(self.notebook_closed_img, (hover_size, hover_size)) if self.notebook_closed_img else None
         else:
@@ -2371,7 +2436,7 @@ class DetectiveGame:
             self.notebook_btn_img_hover = None
         
         # Case files toggle button (left side of table area - 1/3 from left edge)
-        case_files_btn_size = 80
+        case_files_btn_size = 80  # 3x bigger
         self.case_files_btn_size = case_files_btn_size  # Store for hover calculations
         self.case_files_toggle_button = Button(
             portrait_x + portrait_width // 3 - case_files_btn_size // 2,  # 1/3 from left edge
@@ -2388,7 +2453,7 @@ class DetectiveGame:
         if self.case_files_icon_img:
             self.case_files_btn_img_scaled = pygame.transform.smoothscale(self.case_files_icon_img, (case_files_btn_size, case_files_btn_size))
             # Create larger version for hover
-            hover_size = case_files_btn_size + 6
+            hover_size = case_files_btn_size + 12
             self.case_files_btn_img_hover = pygame.transform.smoothscale(self.case_files_icon_img, (hover_size, hover_size))
         else:
             self.case_files_btn_img_scaled = None
@@ -2701,7 +2766,95 @@ class DetectiveGame:
         self.menu_music_button.draw(self.screen)
         self.menu_credits_button.draw(self.screen)
         self.menu_settings_button.draw(self.screen)
+        self.menu_guide_button.draw(self.screen)
         self.menu_exit_button.draw(self.screen)
+    
+    def _draw_guide_state(self):
+        """Draw game guide screen with menu background and scrollable content"""
+        # Draw menu background (same as main menu)
+        if self.menu_background:
+            self.screen.blit(self.menu_background, (0, 0))
+            
+            # Add dark overlay for better text visibility
+            overlay = pygame.Surface((SCREEN_WIDTH, SCREEN_HEIGHT), pygame.SRCALPHA)
+            overlay.fill((0, 0, 0, 150))
+            self.screen.blit(overlay, (0, 0))
+        else:
+            self.screen.fill(COLOR_BG)
+        
+        # Draw warm tint
+        draw_warm_tint(self.screen, alpha=10)
+        
+        # Load guide content from file
+        try:
+            with open("راهنمای_بازی.txt", "r", encoding="utf-8") as f:
+                guide_content = f.read()
+        except:
+            guide_content = "فایل راهنما یافت نشد."
+        
+        # Split content into lines
+        guide_lines = guide_content.split('\n')
+        
+        # Define content area
+        line_height = 32
+        content_area_top = 50
+        content_area_bottom = SCREEN_HEIGHT - 100  # Leave space for back button
+        visible_height = content_area_bottom - content_area_top
+        
+        # Calculate total content height
+        total_content_height = len(guide_lines) * line_height
+        max_scroll = max(0, total_content_height - visible_height)
+        
+        # Clamp scroll value
+        self.guide_scroll = max(0, min(self.guide_scroll, max_scroll))
+        
+        # Set clipping rectangle to prevent text overflow
+        old_clip = self.screen.get_clip()
+        content_rect = pygame.Rect(0, content_area_top, SCREEN_WIDTH, visible_height)
+        self.screen.set_clip(content_rect)
+        
+        # Draw guide content with scroll offset
+        guide_y = content_area_top - self.guide_scroll
+        
+        for line in guide_lines:
+            # Only draw if visible
+            if content_area_top - line_height < guide_y < content_area_bottom + line_height:
+                if line.strip():
+                    # Check if it's a header line (contains ═ or ─)
+                    if '═' in line or '─' in line:
+                        color = COLOR_GOLD
+                    elif line.strip().startswith('💡') or line.strip().startswith('•'):
+                        color = (200, 180, 140)  # Hint color
+                    else:
+                        color = COLOR_TEXT
+                    
+                    draw_text_with_shadow(self.screen, line, FONT_FARSI_SMALL, color,
+                                         (SCREEN_WIDTH // 2, guide_y), shadow_offset=1, center=True)
+            guide_y += line_height
+        
+        # Restore original clipping
+        self.screen.set_clip(old_clip)
+        
+        # Draw scroll indicator if content is scrollable
+        if max_scroll > 0:
+            scroll_bar_width = 6
+            scroll_bar_x = SCREEN_WIDTH - 30
+            scroll_track_height = visible_height - 20
+            scroll_bar_height = max(30, int(scroll_track_height * visible_height / total_content_height))
+            scroll_bar_y = content_area_top + 10 + int((scroll_track_height - scroll_bar_height) * self.guide_scroll / max_scroll) if max_scroll > 0 else content_area_top + 10
+            
+            # Draw scroll track
+            pygame.draw.rect(self.screen, COLOR_BORDER_DARK, 
+                           (scroll_bar_x, content_area_top + 10, scroll_bar_width, scroll_track_height), border_radius=3)
+            # Draw scroll bar
+            pygame.draw.rect(self.screen, COLOR_GOLD, 
+                           (scroll_bar_x, scroll_bar_y, scroll_bar_width, scroll_bar_height), border_radius=3)
+        
+        # Back button
+        self.guide_back_button.draw(self.screen)
+        
+        # Draw vignette
+        draw_vignette(self.screen)
     
     def _draw_credits_state(self):
         """Draw credits/about screen with gothic styling and scrolling"""
@@ -2731,7 +2884,7 @@ class DetectiveGame:
             ("محمد طهماسبی", COLOR_TEXT),
             ("عبدالمتین بابکی", COLOR_TEXT),
             ("", None),
-            ("گرافیست", COLOR_GOLD),
+            ("گرافیک", COLOR_GOLD),
             ("هلنا نوابی", COLOR_TEXT),
             ("", None),
             ("موسیقی", COLOR_GOLD),
@@ -3736,14 +3889,14 @@ class DetectiveGame:
         """Draw win or lose screen with gothic styling"""
         # Draw win/lose image as full-screen background (no blur)
         if self.state == "win" and self.win_img:
-            scaled_bg = pygame.transform.smoothscale(self.win_img, (SCREEN_WIDTH, SCREEN_HEIGHT))
+            scaled_bg = scale_to_fill(self.win_img, SCREEN_WIDTH, SCREEN_HEIGHT)
             self.screen.blit(scaled_bg, (0, 0))
             # Add dark overlay for better text readability
             overlay = pygame.Surface((SCREEN_WIDTH, SCREEN_HEIGHT), pygame.SRCALPHA)
             overlay.fill((0, 0, 0, 100))
             self.screen.blit(overlay, (0, 0))
         elif self.state == "lose" and self.lose_img:
-            scaled_bg = pygame.transform.smoothscale(self.lose_img, (SCREEN_WIDTH, SCREEN_HEIGHT))
+            scaled_bg = scale_to_fill(self.lose_img, SCREEN_WIDTH, SCREEN_HEIGHT)
             self.screen.blit(scaled_bg, (0, 0))
             # Add dark overlay for better text readability
             overlay = pygame.Surface((SCREEN_WIDTH, SCREEN_HEIGHT), pygame.SRCALPHA)
@@ -3871,6 +4024,9 @@ class DetectiveGame:
                 if event.key == pygame.K_ESCAPE:
                     if self.state == "credits":
                         self.state = "menu"
+                    elif self.state == "guide":
+                        self.guide_scroll = 0
+                        self.state = "menu"
                     else:
                         self.running = False
                 elif event.key == pygame.K_F11:
@@ -3893,6 +4049,9 @@ class DetectiveGame:
                     self.settings_status_message = ""
                     # Reload settings when entering settings screen
                     self._create_settings_ui()
+                if self.menu_guide_button.handle_event(event):
+                    self.guide_scroll = 0
+                    self.state = "guide"
                 if self.menu_exit_button.handle_event(event):
                     self.running = False
             
@@ -3945,6 +4104,15 @@ class DetectiveGame:
                 if event.type == pygame.MOUSEWHEEL:
                     self.credits_scroll -= event.y * 30  # Scroll 30px per wheel tick
                     self.credits_scroll = max(0, self.credits_scroll)
+            
+            elif self.state == "guide":
+                if self.guide_back_button.handle_event(event):
+                    self.guide_scroll = 0  # Reset scroll when leaving
+                    self.state = "menu"
+                # Handle scroll wheel
+                if event.type == pygame.MOUSEWHEEL:
+                    self.guide_scroll -= event.y * 30  # Scroll 30px per wheel tick
+                    self.guide_scroll = max(0, self.guide_scroll)
             
             elif self.state == "intro":
                 # Handle skip button while streaming - skip directly to suspect selection
@@ -4258,6 +4426,10 @@ class DetectiveGame:
             self.suspect_back_button.update(dt_seconds)
         if hasattr(self, 'credits_back_button'):
             self.credits_back_button.update(dt_seconds)
+        if hasattr(self, 'guide_back_button'):
+            self.guide_back_button.update(dt_seconds)
+        if hasattr(self, 'menu_guide_button'):
+            self.menu_guide_button.update(dt_seconds)
         if hasattr(self, 'settings_save_button'):
             self.settings_save_button.update(dt_seconds)
         if hasattr(self, 'settings_back_button'):
@@ -4337,6 +4509,8 @@ class DetectiveGame:
             self._draw_video_state()
         elif self.state == "credits":
             self._draw_credits_state()
+        elif self.state == "guide":
+            self._draw_guide_state()
         elif self.state == "settings":
             self._draw_settings_state()
         elif self.state == "intro":

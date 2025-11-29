@@ -137,7 +137,7 @@ Never admit innocence or guilt directly.
         prompt_parts.append(char.get("dialogue_style", ""))
         
         # 5. Forbidden lines for this character
-        prompt_parts.append(f"\n[جملات ممنوع برای {char['name']}]:")
+        prompt_parts.append(f"\n[{char['name']} سعی میکند این جملات را به زبان نیاورد]:")
         for line in char.get("forbidden_lines", []):
             prompt_parts.append(f"- {line}")
         
@@ -149,7 +149,7 @@ Never admit innocence or guilt directly.
         
         # 7. Relationships context
         if char.get("relationships"):
-            prompt_parts.append(f"\n[روابط با دیگران]:")
+            prompt_parts.append(f"\n[اطلاعات {char['name']} از دیگران]:")
             for person, relationship in char["relationships"].items():
                 prompt_parts.append(f"• {person}: {relationship}")
         
