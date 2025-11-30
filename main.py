@@ -1038,11 +1038,18 @@ class NotebookPanel:
         # Track which side is being edited (0 = right/odd, 1 = left/even)
         self.active_side = 0  # 0 = right page (odd days), 1 = left page (even days)
         
+        # Calculate max chars per line based on page width
+        # Each page is half the notebook width minus margins
+        page_width = (width // 4) - 70  # Half width minus left/right margins (30px each side)
+        # Use a wide character for measurement (Persian characters tend to be wider)
+        test_char = "م"  # A medium-width Persian character
+        char_width = font.size(test_char)[0]
+        self.max_chars_per_line = max(20, page_width // char_width)  # At least 20 chars, calculated from available space
+        
         # Text input area for current editable page
         self.text_lines = []  # List of text lines being edited
         self.cursor_line = 0
         self.cursor_pos = 0
-        self.max_chars_per_line = 12  # Max chars before auto-wrap
         self.max_lines = 15
         
         # Navigation buttons - positioned at bottom corners
@@ -1278,19 +1285,43 @@ class NotebookPanel:
                     self.text_lines[self.cursor_line] = line[:self.cursor_pos] + event.unicode + line[self.cursor_pos:]
                     self.cursor_pos += 1
                 else:
-                    # Line is full, wrap to next line
-                    if self.cursor_line < len(self.text_lines) - 1:
-                        self.cursor_line += 1
-                        self.cursor_pos = 0
-                        # Insert character at start of next line
-                        next_line = self.text_lines[self.cursor_line]
-                        self.text_lines[self.cursor_line] = event.unicode + next_line
-                        self.cursor_pos = 1
-                    elif len(self.text_lines) < self.max_lines:
-                        # Create new line
-                        self.text_lines.append(event.unicode)
-                        self.cursor_line += 1
-                        self.cursor_pos = 1
+                    # Line is full, need to wrap
+                    # Find the last word to move to next line
+                    words = line.split()
+                    if len(words) > 1:
+                        # Move last word to next line
+                        last_word = words[-1]
+                        current_line_text = ' '.join(words[:-1])
+                        
+                        # Update current line
+                        self.text_lines[self.cursor_line] = current_line_text
+                        
+                        # Add character and last word to next line
+                        if self.cursor_line < len(self.text_lines) - 1:
+                            # Insert at start of existing next line
+                            next_line = self.text_lines[self.cursor_line + 1]
+                            # Check if next line starts with space, if not add one
+                            separator = '' if next_line.startswith(' ') else ' '
+                            self.text_lines[self.cursor_line + 1] = last_word + event.unicode + separator + next_line
+                            self.cursor_line += 1
+                            self.cursor_pos = len(last_word) + 2  # Position after word, space, and new char
+                        elif len(self.text_lines) < self.max_lines:
+                            # Create new line with last word and new character
+                            self.text_lines.append(last_word + ' ' + event.unicode)
+                            self.cursor_line += 1
+                            self.cursor_pos = len(last_word) + 2
+                    else:
+                        # Single long word, just wrap normally
+                        if self.cursor_line < len(self.text_lines) - 1:
+                            self.cursor_line += 1
+                            self.cursor_pos = 0
+                            next_line = self.text_lines[self.cursor_line]
+                            self.text_lines[self.cursor_line] = event.unicode + next_line
+                            self.cursor_pos = 1
+                        elif len(self.text_lines) < self.max_lines:
+                            self.text_lines.append(event.unicode)
+                            self.cursor_line += 1
+                            self.cursor_pos = 1
                 self._save_current_page()
                 return True
         
@@ -2877,7 +2908,7 @@ class DetectiveGame:
         credits_lines = [
             ("", None),
             ("نویسنده و کارگردان", COLOR_GOLD),
-            ("آرمین آقائی", COLOR_TEXT),
+            ("آرمین (آرمار) آقائی", COLOR_TEXT),
             ("", None),
             ("توسعه", COLOR_GOLD),
             ("امیر علی فتاح پسند", COLOR_TEXT),
